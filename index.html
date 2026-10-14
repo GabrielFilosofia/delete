@@ -1,0 +1,554 @@
+
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <title>Puzzle Dataset Collector</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      background: #0b1120;
+      color: #f1f5f9;
+      font-family: system-ui, sans-serif;
+    }
+
+    main {
+      max-width: 650px;
+      margin: auto;
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 8px;
+    }
+
+    .muted { color: #9caec4; }
+
+    .card {
+      background: #131e30;
+      border: 1px solid #2b3a50;
+      border-radius: 18px;
+      padding: 18px;
+      margin: 16px 0;
+    }
+
+    .stats {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .stats strong {
+      display: block;
+      font-size: 1.6rem;
+      color: #7ce5c5;
+    }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      margin-top: 10px;
+      border: 0;
+      border-radius: 11px;
+      background: #7ce5c5;
+      color: #09231c;
+      font-weight: 750;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .4;
+      cursor: not-allowed;
+    }
+
+    button.secondary {
+      background: #26364d;
+      color: #f1f5f9;
+    }
+
+    button.danger {
+      background: #512b35;
+      color: #ffd7dc;
+    }
+
+    input[type="file"] { display: none; }
+
+    .preview {
+      display: none;
+      width: 100%;
+      max-height: 300px;
+      object-fit: contain;
+      margin-top: 14px;
+      border-radius: 12px;
+      background: #080d16;
+    }
+
+    .status {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 10px;
+      background: #0b1524;
+      color: #b8c7da;
+      overflow-wrap: anywhere;
+    }
+
+    .record {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 0;
+      border-bottom: 1px solid #2b3a50;
+    }
+
+    .record:last-child { border-bottom: 0; }
+
+    .record button {
+      width: auto;
+      margin: 0;
+      padding: 9px 12px;
+    }
+
+    .small { font-size: .85rem; }
+  </style>
+</head>
+
+<body>
+<main>
+  <h1>Puzzle Dataset</h1>
+  <p class="muted">
+    Recolhe pares de imagens para o teu projeto de Machine Learning.
+  </p>
+
+  <section class="card">
+    <div class="stats">
+      <div>
+        <span class="muted">Pares guardados</span>
+        <strong id="count">0</strong>
+      </div>
+      <div>
+        <span class="muted">Próximo ID</span>
+        <strong id="nextId">001</strong>
+      </div>
+    </div>
+    <p class="muted small">
+      Os dados ficam guardados neste browser, não num servidor.
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>1. Puzzle incompleto</h2>
+    <p class="muted">
+      Fotografa o puzzle com o espaço vazio visível.
+    </p>
+
+    <button id="puzzleButton">Fotografar puzzle</button>
+    <input id="puzzleInput" type="file"
+           accept="image/*" capture="environment">
+
+    <img id="puzzlePreview" class="preview" alt="Puzzle incompleto">
+
+    <div id="puzzleStatus" class="status">
+      Ainda não foi capturada nenhuma imagem.
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2. Peça correta</h2>
+    <p class="muted">
+      Fotografa a peça que corresponde ao espaço vazio.
+    </p>
+
+    <button id="pieceButton" disabled>
+      Fotografar peça
+    </button>
+
+    <input id="pieceInput" type="file"
+           accept="image/*" capture="environment">
+
+    <img id="piecePreview" class="preview" alt="Peça correta">
+
+    <div id="pieceStatus" class="status">
+      Primeiro, fotografa o puzzle incompleto.
+    </div>
+
+    <button id="saveButton" disabled>Guardar par</button>
+    <button id="cancelButton" class="secondary" disabled>
+      Cancelar par atual
+    </button>
+  </section>
+
+  <section class="card">
+    <h2>3. Exportar dataset</h2>
+    <p class="muted">
+      Descarrega todas as imagens e o índice que associa cada par.
+    </p>
+
+    <button id="exportButton">Exportar PuzzleDataset.zip</button>
+    <button id="csvButton" class="secondary">Exportar índice CSV</button>
+  </section>
+
+  <section class="card">
+    <h2>Pares guardados</h2>
+    <div id="records" class="muted">A carregar...</div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+
+<script>
+const DB_NAME = "PuzzleDatasetDB";
+const STORE_NAME = "pairs";
+
+let db;
+let puzzleImage = null;
+let pieceImage = null;
+let currentId = null;
+
+const $ = id => document.getElementById(id);
+
+function openDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+
+    request.onupgradeneeded = () => {
+      const database = request.result;
+
+      if (!database.objectStoreNames.contains(STORE_NAME)) {
+        database.createObjectStore(STORE_NAME, { keyPath: "id" });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function getAllPairs() {
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(STORE_NAME)
+      .objectStore(STORE_NAME)
+      .getAll();
+
+    request.onsuccess = () => {
+      resolve(request.result.sort((a, b) => a.id - b.id));
+    };
+
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function savePair(pair) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, "readwrite");
+
+    transaction.objectStore(STORE_NAME).add(pair);
+
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
+function deletePair(id) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, "readwrite");
+
+    transaction.objectStore(STORE_NAME).delete(id);
+
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+function formatId(id) {
+  return String(id).padStart(3, "0");
+}
+
+async function getNextId() {
+  const pairs = await getAllPairs();
+
+  return pairs.reduce(
+    (maximum, pair) => Math.max(maximum, pair.id),
+    0
+  ) + 1;
+}
+
+function readImage(input, preview) {
+  return new Promise(resolve => {
+    const file = input.files[0];
+
+    if (!file) {
+      resolve(null);
+      return;
+    }
+
+    // Guardamos o ficheiro original, sem alterar a fotografia.
+    const image = {
+      blob: file,
+      type: file.type || "image/jpeg"
+    };
+
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = "block";
+
+    resolve(image);
+  });
+}
+
+$("puzzleButton").onclick = () => {
+  $("puzzleInput").click();
+};
+
+$("pieceButton").onclick = () => {
+  $("pieceInput").click();
+};
+
+$("puzzleInput").onchange = async () => {
+  const image = await readImage(
+    $("puzzleInput"),
+    $("puzzlePreview")
+  );
+
+  if (!image) return;
+
+  puzzleImage = image;
+  pieceImage = null;
+  currentId = await getNextId();
+
+  $("puzzleStatus").textContent =
+    `Puzzle capturado. ID do par: ${formatId(currentId)}.`;
+
+  $("pieceStatus").textContent =
+    "Agora fotografa a peça correta.";
+
+  $("piecePreview").style.display = "none";
+  $("pieceButton").disabled = false;
+  $("saveButton").disabled = true;
+  $("cancelButton").disabled = false;
+};
+
+$("pieceInput").onchange = async () => {
+  if (!puzzleImage) return;
+
+  const image = await readImage(
+    $("pieceInput"),
+    $("piecePreview")
+  );
+
+  if (!image) return;
+
+  pieceImage = image;
+
+  $("pieceStatus").textContent =
+    `Peça capturada para o par ${formatId(currentId)}.`;
+
+  $("saveButton").disabled = false;
+};
+
+$("saveButton").onclick = async () => {
+  if (!puzzleImage || !pieceImage || currentId === null) {
+    return;
+  }
+
+  try {
+    await savePair({
+      id: currentId,
+      puzzle: puzzleImage.blob,
+      piece: pieceImage.blob,
+      puzzleType: puzzleImage.type,
+      pieceType: pieceImage.type,
+      createdAt: new Date().toISOString()
+    });
+
+    const savedId = formatId(currentId);
+
+    resetCurrentPair();
+
+    $("puzzleStatus").textContent =
+      `Par ${savedId} guardado com sucesso.`;
+
+    $("pieceStatus").textContent =
+      "Podes começar o próximo par.";
+
+    await refreshInterface();
+  } catch (error) {
+    alert("Não foi possível guardar o par. Tenta novamente.");
+    console.error(error);
+  }
+};
+
+$("cancelButton").onclick = () => {
+  resetCurrentPair();
+
+  $("puzzleStatus").textContent = "Captura cancelada.";
+  $("pieceStatus").textContent =
+    "Primeiro, fotografa o puzzle incompleto.";
+};
+
+function resetCurrentPair() {
+  puzzleImage = null;
+  pieceImage = null;
+  currentId = null;
+
+  $("puzzleInput").value = "";
+  $("pieceInput").value = "";
+
+  $("puzzlePreview").style.display = "none";
+  $("piecePreview").style.display = "none";
+
+  $("pieceButton").disabled = true;
+  $("saveButton").disabled = true;
+  $("cancelButton").disabled = true;
+}
+
+function extensionFor(type) {
+  if (type === "image/png") return "png";
+  if (type === "image/webp") return "webp";
+  if (type === "image/jpeg") return "jpg";
+  if (type === "image/heic") return "heic";
+  return "img";
+}
+
+function csvEscape(value) {
+  return '"' + String(value).replaceAll('"', '""') + '"';
+}
+
+function buildCsv(pairs) {
+  const rows = [
+    "id,puzzle_file,piece_file,created_at"
+  ];
+
+  for (const pair of pairs) {
+    const id = formatId(pair.id);
+    const puzzleExt = extensionFor(pair.puzzleType);
+    const pieceExt = extensionFor(pair.pieceType);
+
+    rows.push([
+      id,
+      `puzzle_${id}.${puzzleExt}`,
+      `peca_${id}.${pieceExt}`,
+      pair.createdAt
+    ].map(csvEscape).join(","));
+  }
+
+  return rows.join("\r\n");
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+  link.click();
+
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+$("exportButton").onclick = async () => {
+  const pairs = await getAllPairs();
+
+  if (!pairs.length) {
+    alert("Ainda não existem pares para exportar.");
+    return;
+  }
+
+  if (typeof JSZip === "undefined") {
+    alert("Não foi possível carregar a biblioteca ZIP. Verifica a ligação à Internet.");
+    return;
+  }
+
+  const zip = new JSZip();
+  const folder = zip.folder("PuzzleDataset");
+
+  for (const pair of pairs) {
+    const id = formatId(pair.id);
+    const puzzleExt = extensionFor(pair.puzzleType);
+    const pieceExt = extensionFor(pair.pieceType);
+
+    folder.file(`puzzle_${id}.${puzzleExt}`, pair.puzzle);
+    folder.file(`peca_${id}.${pieceExt}`, pair.piece);
+  }
+
+  folder.file("index.csv", buildCsv(pairs));
+
+  const blob = await zip.generateAsync({ type: "blob" });
+
+  downloadBlob(blob, "PuzzleDataset.zip");
+};
+
+$("csvButton").onclick = async () => {
+  const pairs = await getAllPairs();
+
+  const blob = new Blob(
+    ["\uFEFF", buildCsv(pairs)],
+    { type: "text/csv;charset=utf-8" }
+  );
+
+  downloadBlob(blob, "PuzzleDataset_index.csv");
+};
+
+async function refreshInterface() {
+  const pairs = await getAllPairs();
+
+  $("count").textContent = pairs.length;
+  $("nextId").textContent = formatId(await getNextId());
+
+  const records = $("records");
+  records.replaceChildren();
+
+  if (!pairs.length) {
+    records.textContent = "Ainda não existem pares guardados.";
+    return;
+  }
+
+  for (const pair of [...pairs].reverse()) {
+    const row = document.createElement("div");
+    row.className = "record";
+
+    const info = document.createElement("div");
+    const title = document.createElement("strong");
+    const detail = document.createElement("div");
+
+    title.textContent = `Par ${formatId(pair.id)}`;
+    detail.className = "muted small";
+    detail.textContent = `Puzzle + peça correta`;
+
+    info.append(title, detail);
+
+    const button = document.createElement("button");
+    button.className = "danger";
+    button.textContent = "Apagar";
+
+    button.onclick = async () => {
+      if (confirm(`Apagar o par ${formatId(pair.id)}?`)) {
+        await deletePair(pair.id);
+        await refreshInterface();
+      }
+    };
+
+    row.append(info, button);
+    records.append(row);
+  }
+}
+
+(async function init() {
+  try {
+    db = await openDatabase();
+    await refreshInterface();
+  } catch (error) {
+    console.error(error);
+    alert("O browser não conseguiu iniciar o armazenamento local.");
+  }
+})();
+</script>
+</body>
+</html>
